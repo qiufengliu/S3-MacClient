@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+release/
+
+# macOS
+.DS_Store
+*.DS_Store
+
+# Electron builder cache
+.cache/
+
+# Logs
+npm-debug.log*
+*.log
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment / secrets — should never be committed
+.env
+.env.*
+*.pem
+*.key
+credentials.json

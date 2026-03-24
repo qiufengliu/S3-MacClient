@@ -1,0 +1,26 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Claude Code internal files
+.claude/
+.superpowers/
+
+# Editor
+.vscode/
+.idea/
+
+# Node
+s3-client/node_modules/
+s3-client/dist/
+s3-client/release/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
