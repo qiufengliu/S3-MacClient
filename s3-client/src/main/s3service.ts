@@ -22,7 +22,7 @@ import { fromIni } from '@aws-sdk/credential-providers';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { Readable } from 'stream';
+import { Readable, PassThrough } from 'stream';
 
 export interface S3Item {
   key: string;
@@ -150,14 +150,30 @@ export class S3Service {
     });
   }
 
-  async downloadFile(bucket: string, key: string, destPath: string): Promise<void> {
+  async downloadFile(
+    bucket: string,
+    key: string,
+    destPath: string,
+    onProgress?: (pct: number) => void
+  ): Promise<void> {
     const res = await this.client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
     const stream = res.Body as Readable;
+    const total = res.ContentLength ?? 0;
+    let loaded = 0;
     const ws = fs.createWriteStream(destPath);
     await new Promise<void>((resolve, reject) => {
-      stream.pipe(ws);
+      const pt = new PassThrough();
+      pt.on('data', (chunk: Buffer) => {
+        loaded += chunk.length;
+        if (total > 0 && onProgress) {
+          onProgress(Math.round(loaded / total * 100));
+        }
+      });
+      stream.pipe(pt).pipe(ws);
       ws.on('finish', resolve);
       ws.on('error', reject);
+      pt.on('error', reject);
+      stream.on('error', reject);
     });
   }
 
@@ -183,7 +199,10 @@ export class S3Service {
 
   async downloadToDir(bucket: string, key: string, basePrefix: string, destDir: string): Promise<void> {
     const relativePath = key.slice(basePrefix.length);
-    const fullPath = path.join(destDir, relativePath);
+    const fullPath = path.resolve(destDir, relativePath);
+    if (!fullPath.startsWith(path.resolve(destDir) + path.sep) && fullPath !== path.resolve(destDir)) {
+      throw new Error(`Path traversal detected: ${key}`);
+    }
     const dir = path.dirname(fullPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
@@ -231,7 +250,12 @@ export class S3Service {
     return { succeeded: completed, failed, errors };
   }
 
-  async uploadFile(bucket: string, key: string, filePath: string): Promise<void> {
+  async uploadFile(
+    bucket: string,
+    key: string,
+    filePath: string,
+    onProgress?: (pct: number) => void
+  ): Promise<void> {
     const stat = fs.statSync(filePath);
     const thresholdBytes = this.transferConfig.multipartThresholdMB * 1024 * 1024;
 
@@ -239,11 +263,17 @@ export class S3Service {
       const body = fs.readFileSync(filePath);
       await this.client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body }));
     } else {
-      await this.multipartUpload(bucket, key, filePath, stat.size);
+      await this.multipartUpload(bucket, key, filePath, stat.size, onProgress);
     }
   }
 
-  private async multipartUpload(bucket: string, key: string, filePath: string, fileSize: number): Promise<void> {
+  private async multipartUpload(
+    bucket: string,
+    key: string,
+    filePath: string,
+    fileSize: number,
+    onProgress?: (pct: number) => void
+  ): Promise<void> {
     const partSize = this.transferConfig.partSizeMB * 1024 * 1024;
     const concurrency = this.transferConfig.concurrency;
 
@@ -254,6 +284,7 @@ export class S3Service {
 
     const totalParts = Math.ceil(fileSize / partSize);
     const parts: { ETag: string; PartNumber: number }[] = [];
+    let completedParts = 0;
     const fd = fs.openSync(filePath, 'r');
 
     try {
@@ -272,6 +303,8 @@ export class S3Service {
               PartNumber: j + 1, Body: buffer,
             })).then(res => {
               parts.push({ ETag: res.ETag!, PartNumber: j + 1 });
+              completedParts++;
+              if (onProgress) onProgress(Math.round(completedParts / totalParts * 100));
             })
           );
         }

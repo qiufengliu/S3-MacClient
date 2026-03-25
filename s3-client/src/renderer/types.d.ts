@@ -73,11 +73,13 @@ interface S3Api {
   listBuckets(): Promise<{ ok: boolean; buckets?: string[]; error?: string }>;
   getBucketInfo(bucket: string): Promise<{ ok: boolean; info?: BucketInfo; error?: string }>;
   listObjects(bucket: string, prefix: string): Promise<{ ok: boolean; items?: S3Item[]; error?: string }>;
-  download(bucket: string, key: string): Promise<{ ok: boolean; error?: string }>;
-  batchDownload(bucket: string, items: { key: string; isFolder: boolean }[], currentPrefix: string): Promise<{ ok: boolean; succeeded?: number; failed?: number; errors?: string[]; error?: string }>;
-  onDownloadProgress(callback: (data: { completed: number; total: number; file: string }) => void): () => void;
+  download(bucket: string, key: string, transferId: string): Promise<{ ok: boolean; error?: string }>;
+  batchDownload(bucket: string, items: { key: string; isFolder: boolean }[], currentPrefix: string, transferId: string): Promise<{ ok: boolean; succeeded?: number; failed?: number; errors?: string[]; error?: string }>;
+  onTransferProgress(callback: (data: { id: string; progress: number }) => void): () => void;
+  onTransferStarted(callback: (data: { id: string; name: string; direction: 'upload' | 'download'; size: number | null }) => void): () => void;
+  onTransferDone(callback: (data: { id: string; ok: boolean; error?: string }) => void): () => void;
   upload(bucket: string, prefix: string): Promise<{ ok: boolean; error?: string }>;
-  uploadFiles(bucket: string, prefix: string, localPaths: string[]): Promise<{ ok: boolean; error?: string }>;
+  uploadFiles(bucket: string, prefix: string, localPaths: string[], transferId: string): Promise<{ ok: boolean; error?: string }>;
   delete(bucket: string, key: string): Promise<{ ok: boolean; error?: string }>;
   batchDelete(bucket: string, keys: string[]): Promise<{ ok: boolean; error?: string }>;
   createFolder(bucket: string, key: string): Promise<{ ok: boolean; error?: string }>;

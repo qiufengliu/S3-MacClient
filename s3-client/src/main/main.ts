@@ -10,6 +10,9 @@ const PREVIEW_VIDEO_EXTS = new Set(['mp4','mov','webm','m4v','mkv']);
 let mainWindow: BrowserWindow | null = null;
 let s3: S3Service | null = null;
 
+let _transferId = 0;
+const nextTransferId = () => `main-t${++_transferId}`;
+
 app.setName('Mac S3 Client');
 
 function createWindow() {
@@ -63,7 +66,10 @@ ipcMain.handle('conn:save', async (_e, connection: any, rawSecret?: string) => {
   try {
     const conns = loadConnections();
     const entry: any = { ...connection };
-    if (rawSecret && safeStorage.isEncryptionAvailable()) {
+    if (rawSecret) {
+      if (!safeStorage.isEncryptionAvailable()) {
+        return { ok: false, error: 'System encryption is unavailable. Cannot save secret key securely.' };
+      }
       entry.encryptedSecret = safeStorage.encryptString(rawSecret).toString('base64');
     }
     const idx = conns.findIndex(c => c.id === connection.id);
@@ -166,7 +172,7 @@ ipcMain.handle('s3:listObjects', async (_e, bucket: string, prefix: string) => {
   }
 });
 
-ipcMain.handle('s3:download', async (_e, bucket: string, key: string) => {
+ipcMain.handle('s3:download', async (_e, bucket: string, key: string, transferId: string) => {
   if (!s3 || !mainWindow) return { ok: false, error: 'Not connected' };
   const name = key.split('/').pop() || key;
   const result = await dialog.showSaveDialog(mainWindow, {
@@ -175,14 +181,17 @@ ipcMain.handle('s3:download', async (_e, bucket: string, key: string) => {
   });
   if (result.canceled || !result.filePath) return { ok: false, error: 'Cancelled' };
   try {
-    await s3.downloadFile(bucket, key, result.filePath);
+    mainWindow?.webContents.send('s3:transferProgress', { id: transferId, progress: 0 });
+    await s3.downloadFile(bucket, key, result.filePath, (pct) => {
+      mainWindow?.webContents.send('s3:transferProgress', { id: transferId, progress: pct });
+    });
     return { ok: true };
   } catch (err: any) {
     return { ok: false, error: err.message };
   }
 });
 
-ipcMain.handle('s3:batchDownload', async (_e, bucket: string, items: { key: string; isFolder: boolean }[], currentPrefix: string) => {
+ipcMain.handle('s3:batchDownload', async (_e, bucket: string, items: { key: string; isFolder: boolean }[], currentPrefix: string, transferId: string) => {
   if (!s3 || !mainWindow) return { ok: false, error: 'Not connected' };
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory', 'createDirectory'],
@@ -193,7 +202,8 @@ ipcMain.handle('s3:batchDownload', async (_e, bucket: string, items: { key: stri
   try {
     const destDir = result.filePaths[0];
     const res = await s3.batchDownload(bucket, items, currentPrefix, destDir, (completed, total, file) => {
-      mainWindow?.webContents.send('s3:downloadProgress', { completed, total, file });
+      const pct = total > 0 ? Math.round(completed / total * 100) : 0;
+      mainWindow?.webContents.send('s3:transferProgress', { id: transferId, progress: pct });
     });
     return { ok: true, ...res };
   } catch (err: any) {
@@ -207,25 +217,42 @@ ipcMain.handle('s3:upload', async (_e, bucket: string, prefix: string) => {
     properties: ['openFile', 'multiSelections'],
   });
   if (result.canceled) return { ok: false, error: 'Cancelled' };
+  let transferId: string | undefined;
   try {
     for (const filePath of result.filePaths) {
       const name = path.basename(filePath);
       const key = prefix ? prefix + name : name;
-      await s3.uploadFile(bucket, key, filePath);
+      const stat = fs.statSync(filePath);
+      transferId = nextTransferId();
+      mainWindow?.webContents.send('s3:transferStarted', {
+        id: transferId,
+        name,
+        direction: 'upload',
+        size: stat.size,
+      });
+      await s3.uploadFile(bucket, key, filePath, (pct) => {
+        mainWindow?.webContents.send('s3:transferProgress', { id: transferId, progress: pct });
+      });
+      mainWindow?.webContents.send('s3:transferDone', { id: transferId, ok: true });
     }
     return { ok: true };
   } catch (err: any) {
+    if (transferId !== undefined) {
+      mainWindow?.webContents.send('s3:transferDone', { id: transferId, ok: false, error: (err as any).message });
+    }
     return { ok: false, error: err.message };
   }
 });
 
-ipcMain.handle('s3:uploadFiles', async (_e, bucket: string, prefix: string, localPaths: string[]) => {
+ipcMain.handle('s3:uploadFiles', async (_e, bucket: string, prefix: string, localPaths: string[], transferId: string) => {
   if (!s3) return { ok: false, error: 'Not connected' };
   try {
     for (const filePath of localPaths) {
       const name = path.basename(filePath);
       const key = prefix ? prefix + name : name;
-      await s3.uploadFile(bucket, key, filePath);
+      await s3.uploadFile(bucket, key, filePath, (pct) => {
+        mainWindow?.webContents.send('s3:transferProgress', { id: transferId, progress: pct });
+      });
     }
     return { ok: true };
   } catch (err: any) {

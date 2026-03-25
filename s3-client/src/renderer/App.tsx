@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { ConnectionPanel } from './components/ConnectionPanel';
 import { S3Pane } from './components/S3Pane';
 import { LocalPane } from './components/LocalPane';
@@ -10,13 +10,26 @@ const api = window.s3api;
 
 export function App() {
   const s3 = useS3();
-  const { transfers, addTransfer, updateTransfer, clearCompleted, activeCount } = useTransfers();
+  const { transfers, addTransfer, addTransferWithId, updateTransfer, clearCompleted, activeCount } = useTransfers();
   const [transferConfig, setTransferConfig] = useState<TransferConfig>({
     multipartThresholdMB: 64, partSizeMB: 8, concurrency: 4, timeoutSeconds: 300,
   });
   const [leftWidth, setLeftWidth] = useState(400);
   const dragging = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const unsubProgress = api.onTransferProgress(({ id, progress }) => {
+      updateTransfer(id, { progress });
+    });
+    const unsubStarted = api.onTransferStarted(({ id, name, direction, size }) => {
+      addTransferWithId(id, { name, direction, status: 'active', progress: 0, size });
+    });
+    const unsubDone = api.onTransferDone(({ id, ok, error }) => {
+      updateTransfer(id, { status: ok ? 'done' : 'error', progress: ok ? 100 : undefined, error });
+    });
+    return () => { unsubProgress(); unsubStarted(); unsubDone(); };
+  }, [updateTransfer, addTransferWithId]);
 
   const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -61,8 +74,8 @@ export function App() {
     for (const p of paths) {
       const name = p.split('/').pop() || p;
       const id = addTransfer({ name, direction: 'upload', status: 'active', progress: 0, size: null });
-      const res = await api.uploadFiles(s3.currentBucket, s3.prefix, [p]);
-      updateTransfer(id, { status: res.ok ? 'done' : 'error', progress: 100, error: res.error });
+      const res = await api.uploadFiles(s3.currentBucket, s3.prefix, [p], id);
+      updateTransfer(id, { status: res.ok ? 'done' : 'error', progress: res.ok ? 100 : undefined, error: res.error });
     }
     s3.refresh();
   };

@@ -70,17 +70,9 @@ export function S3Pane(props: Props) {
   const [presignUrl, setPresignUrl] = useState<string | null>(null);
   const [policyBucket, setPolicyBucket] = useState<string | null>(null);
   const [policyContent, setPolicyContent] = useState<string | null>(null);
-  const [downloadProgress, setDownloadProgress] = useState<{ completed: number; total: number; file: string } | null>(null);
-
   useEffect(() => {
-    const cleanup = api.onDownloadProgress(data => {
-      setDownloadProgress(data);
-      if (data.completed >= data.total && data.total > 0) {
-        setTimeout(() => setDownloadProgress(null), 2000);
-      }
-    });
     const cleanupEmpty = api.onEmptyProgress(data => setEmptyProgress(data.deleted));
-    return () => { cleanup(); cleanupEmpty(); };
+    return () => { cleanupEmpty(); };
   }, []);
 
   const filtered = items.filter(i => !search || i.name.toLowerCase().includes(search.toLowerCase()));
@@ -113,8 +105,8 @@ export function S3Pane(props: Props) {
   const handleDownload = async (item: S3Item) => {
     if (!currentBucket) return;
     const id = onAddTransfer({ name: item.name, direction: 'download', status: 'active', progress: 0, size: item.size });
-    const res = await api.download(currentBucket, item.key);
-    onUpdateTransfer(id, { status: res.ok ? 'done' : 'error', progress: 100, error: res.error });
+    const res = await api.download(currentBucket, item.key, id);
+    onUpdateTransfer(id, { status: res.ok ? 'done' : 'error', progress: res.ok ? 100 : undefined, error: res.error });
     if (!res.ok && res.error !== 'Cancelled') onError(res.error || 'Download failed');
   };
 
@@ -122,15 +114,15 @@ export function S3Pane(props: Props) {
     if (!currentBucket) return;
     const dl = overrideItems || filtered.filter(i => selectedKeys.has(i.key)).map(i => ({ key: i.key, isFolder: i.isFolder }));
     if (dl.length === 0) return;
-    setDownloadProgress({ completed: 0, total: 0, file: 'Preparing...' });
-    const res = await api.batchDownload(currentBucket, dl, prefix);
+    const id = onAddTransfer({ name: `${dl.length} file${dl.length > 1 ? 's' : ''}`, direction: 'download', status: 'active', progress: 0, size: null });
+    const res = await api.batchDownload(currentBucket, dl, prefix, id);
+    onUpdateTransfer(id, { status: res.ok ? 'done' : 'error', progress: res.ok ? 100 : undefined, error: res.error });
     if (res.ok) {
       setSelectedKeys(new Set());
       if (res.failed && res.failed > 0) onError(`Downloaded ${res.succeeded}, ${res.failed} failed`);
     } else if (res.error !== 'Cancelled') {
       onError(res.error || 'Batch download failed');
     }
-    setDownloadProgress(null);
   };
 
   const handleDelete = (item: S3Item) => {
@@ -374,16 +366,6 @@ export function S3Pane(props: Props) {
               </div>
             )}
 
-            {downloadProgress && (
-              <div style={s.progressBar}>
-                <span>⬇️ {downloadProgress.file}</span>
-                <span>{downloadProgress.total > 0 ? `${downloadProgress.completed}/${downloadProgress.total}` : '...'}</span>
-                <div style={s.progressTrack}>
-                  <div style={{ ...s.progressFill, width: downloadProgress.total > 0 ? `${(downloadProgress.completed / downloadProgress.total) * 100}%` : '0%' }} />
-                </div>
-              </div>
-            )}
-
             {presignUrl && (
               <div style={{ ...s.confirmBar, background: 'rgba(63,185,80,0.1)', color: 'var(--success)', borderColor: 'var(--success)' }}>
                 URL copied to clipboard!
@@ -501,9 +483,6 @@ const s: Record<string, React.CSSProperties> = {
   newFolderBar: { display: 'flex', gap: 6, padding: '6px 10px', borderBottom: '1px solid var(--border)', alignItems: 'center', flexShrink: 0 },
   errorBar: { background: 'rgba(248,81,73,0.1)', color: 'var(--danger)', padding: '6px 12px', borderBottom: '1px solid var(--border)', fontSize: 12, display: 'flex', alignItems: 'center', flexShrink: 0 },
   confirmBar: { background: 'rgba(248,81,73,0.08)', border: '1px solid rgba(248,81,73,0.3)', color: 'var(--danger)', padding: '8px 12px', margin: '6px 10px', borderRadius: 6, fontSize: 12, display: 'flex', alignItems: 'center', flexShrink: 0 },
-  progressBar: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderBottom: '1px solid var(--border)', fontSize: 12, flexShrink: 0 },
-  progressTrack: { flex: 1, height: 3, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' },
-  progressFill: { height: '100%', background: 'var(--accent)', borderRadius: 2, transition: 'width 0.2s' },
   empty: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--text2)' },
   presignOverlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
   presignBox: { background: 'var(--surface)', borderRadius: 10, padding: 20, display: 'flex', flexDirection: 'column', minWidth: 280, boxShadow: '0 8px 40px rgba(0,0,0,0.5)' },

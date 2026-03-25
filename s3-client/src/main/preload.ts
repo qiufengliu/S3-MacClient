@@ -10,18 +10,29 @@ contextBridge.exposeInMainWorld('s3api', {
   // Objects
   listObjects: (bucket: string, prefix: string) =>
     ipcRenderer.invoke('s3:listObjects', bucket, prefix),
-  download: (bucket: string, key: string) =>
-    ipcRenderer.invoke('s3:download', bucket, key),
-  batchDownload: (bucket: string, items: { key: string; isFolder: boolean }[], currentPrefix: string) =>
-    ipcRenderer.invoke('s3:batchDownload', bucket, items, currentPrefix),
-  onDownloadProgress: (callback: (data: { completed: number; total: number; file: string }) => void) => {
-    ipcRenderer.on('s3:downloadProgress', (_e, data) => callback(data));
-    return () => { ipcRenderer.removeAllListeners('s3:downloadProgress'); };
+  download: (bucket: string, key: string, transferId: string) =>
+    ipcRenderer.invoke('s3:download', bucket, key, transferId),
+  batchDownload: (bucket: string, items: { key: string; isFolder: boolean }[], currentPrefix: string, transferId: string) =>
+    ipcRenderer.invoke('s3:batchDownload', bucket, items, currentPrefix, transferId),
+  onTransferProgress: (callback: (data: { id: string; progress: number }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, data: { id: string; progress: number }) => callback(data);
+    ipcRenderer.on('s3:transferProgress', handler);
+    return () => { ipcRenderer.removeListener('s3:transferProgress', handler); };
+  },
+  onTransferStarted: (callback: (data: { id: string; name: string; direction: 'upload' | 'download'; size: number | null }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, data: { id: string; name: string; direction: 'upload' | 'download'; size: number | null }) => callback(data);
+    ipcRenderer.on('s3:transferStarted', handler);
+    return () => { ipcRenderer.removeListener('s3:transferStarted', handler); };
+  },
+  onTransferDone: (callback: (data: { id: string; ok: boolean; error?: string }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, data: { id: string; ok: boolean; error?: string }) => callback(data);
+    ipcRenderer.on('s3:transferDone', handler);
+    return () => { ipcRenderer.removeListener('s3:transferDone', handler); };
   },
   upload: (bucket: string, prefix: string) =>
     ipcRenderer.invoke('s3:upload', bucket, prefix),
-  uploadFiles: (bucket: string, prefix: string, localPaths: string[]) =>
-    ipcRenderer.invoke('s3:uploadFiles', bucket, prefix, localPaths),
+  uploadFiles: (bucket: string, prefix: string, localPaths: string[], transferId: string) =>
+    ipcRenderer.invoke('s3:uploadFiles', bucket, prefix, localPaths, transferId),
   delete: (bucket: string, key: string) =>
     ipcRenderer.invoke('s3:delete', bucket, key),
   batchDelete: (bucket: string, keys: string[]) =>

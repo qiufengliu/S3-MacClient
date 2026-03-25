@@ -5,6 +5,7 @@
 # Claude Code internal files
 .claude/
 .superpowers/
+docs/superpowers/
 
 # Editor
 .vscode/

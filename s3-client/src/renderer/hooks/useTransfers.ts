@@ -12,6 +12,13 @@ export function useTransfers() {
     return id;
   }, []);
 
+  const addTransferWithId = useCallback((id: string, item: Omit<TransferItem, 'id'>) => {
+    setTransfers(prev => {
+      if (prev.some(t => t.id === id)) return prev;
+      return [...prev, { ...item, id }];
+    });
+  }, []);
+
   const updateTransfer = useCallback((id: string, updates: Partial<TransferItem>) => {
     setTransfers(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
   }, []);
@@ -22,5 +29,5 @@ export function useTransfers() {
 
   const activeCount = transfers.filter(t => t.status === 'active' || t.status === 'pending').length;
 
-  return { transfers, addTransfer, updateTransfer, clearCompleted, activeCount };
+  return { transfers, addTransfer, addTransferWithId, updateTransfer, clearCompleted, activeCount };
 }
